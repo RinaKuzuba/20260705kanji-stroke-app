@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>漢字書き順・読み方表示</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+
+        html, body {
+            margin: 0; padding: 0;
+            min-height: 100%;
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif;
+            background: #f4f7f6; color: #333;
+            display: flex; flex-direction: column; align-items: center;
+            padding: 20px 16px 40px;
+        }
+        .container {
+            background: white; padding: 20px; border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1); text-align: center;
+            width: 100%; max-width: 420px;
+        }
+        h2 { margin: 0 0 14px; color: #2c3e50; }
+
+        /* ===== 入力方法タブ ===== */
+        .tab-bar {
+            display: flex; gap: 6px; margin-bottom: 16px;
+        }
+        .tab-btn {
+            flex: 1; padding: 12px 4px; font-size: 0.95rem; font-weight: bold;
+            border: 2px solid #e0e0e0; border-radius: 12px;
+            background: #fff; color: #7f8c8d; cursor: pointer;
+            touch-action: manipulation;
+        }
+        .tab-btn.active {
+            background: #3498db; border-color: #3498db; color: #fff;
+        }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        /* ===== 手書きパネル ===== */
+        #draw-canvas {
+            width: 100%; aspect-ratio: 1 / 1;
+            max-height: min(70vw, 300px);
+            background: #fff;
+            border: 2px solid #eee; border-radius: 15px;
+            background-image: linear-gradient(#f9f9f9 2px, transparent 2px), linear-gradient(90deg, #f9f9f9 2px, transparent 2px);
+            background-size: 50% 50%;
+            touch-action: none; /* 書いている間のスクロールを防止 */
+            display: block; margin: 0 auto 8px;
+            cursor: crosshair;
+        }
+        .draw-hint { color: #bbb; font-size: 0.9rem; margin: 0 0 8px; }
+        .draw-controls { display: flex; gap: 8px; justify-content: center; margin-bottom: 10px; }
+        .sub-btn {
+            padding: 10px 18px; font-size: 0.95rem; font-weight: bold;
+            border: 2px solid #e0e0e0; border-radius: 12px;
+            background: #fff; color: #555; cursor: pointer;
+            min-height: 44px; touch-action: manipulation;
+        }
+        #candidates {
+            display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
+            min-height: 52px; margin-bottom: 6px;
+        }
+        .cand-btn {
+            font-size: 1.5rem; min-width: 52px; min-height: 52px;
+            border: 2px solid #3498db; border-radius: 12px;
+            background: #eaf4fc; color: #2c3e50; cursor: pointer;
+            font-family: inherit; touch-action: manipulation;
+        }
+        .cand-btn:active { background: #3498db; color: #fff; }
+
+        /* ===== 学年リストパネル ===== */
+        .grade-bar {
+            display: grid; grid-template-columns: repeat(6, 1fr);
+            gap: 6px; margin-bottom: 12px;
+        }
+        .grade-btn {
+            padding: 10px 0; font-size: 0.95rem; font-weight: bold;
+            border: 2px solid #e0e0e0; border-radius: 12px;
+            background: #fff; color: #7f8c8d; cursor: pointer;
+            min-height: 44px; touch-action: manipulation;
+        }
+        .grade-btn.active {
+            background: #27ae60; border-color: #27ae60; color: #fff;
+        }
+        #kanji-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+            gap: 6px;
+            max-height: 260px; overflow-y: auto;
+            padding: 4px; margin-bottom: 10px;
+            border: 2px solid #eee; border-radius: 15px;
+            -webkit-overflow-scrolling: touch;
+        }
+        .kanji-btn {
+            font-size: 1.4rem; min-height: 48px;
+            border: 1px solid #e8eef3; border-radius: 10px;
+            background: #fbfdfe; color: #2c3e50; cursor: pointer;
+            font-family: inherit; touch-action: manipulation;
+        }
+        .kanji-btn:active { background: #27ae60; color: #fff; }
+        .grid-message { color: #bbb; padding: 30px 0; grid-column: 1 / -1; }
+
+        /* ===== キーボードパネル ===== */
+        .controls { display: flex; justify-content: center; gap: 10px; }
+        input {
+            font-size: 1.5rem; padding: 10px; width: 70px; text-align: center;
+            border: 2px solid #e0e0e0; border-radius: 12px; outline: none;
+        }
+        .run-btn {
+            font-size: 1rem; padding: 10px 20px; cursor: pointer;
+            background: #3498db; color: white; border: none; border-radius: 12px;
+            font-weight: bold; min-height: 44px; touch-action: manipulation;
+        }
+
+        /* ===== 表示エリア（共通） ===== */
+        #svg-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            max-height: min(60vw, 340px);
+            background: #fff; border: 2px solid #eee; border-radius: 15px;
+            margin: 16px auto 16px; overflow: hidden;
+            background-image: linear-gradient(#f9f9f9 2px, transparent 2px), linear-gradient(90deg, #f9f9f9 2px, transparent 2px);
+            background-size: 50% 50%;
+            display: flex; align-items: center; justify-content: center;
+        }
+        svg { width: 92%; height: 92%; }
+
+        .info-panel {
+            text-align: left; background: #fdfdfd; padding: 12px 15px;
+            border-radius: 12px; border: 1px solid #eef2f7;
+            word-break: break-all;
+        }
+        .info-item { margin-bottom: 8px; font-size: 1rem; line-height: 1.6; border-bottom: 1px dashed #eee; padding-bottom: 8px; }
+        .info-item:last-child { border-bottom: none; margin-bottom: 0; }
+        .label { font-weight: bold; color: #7f8c8d; display: inline-block; min-width: 72px; font-size: 0.85rem; vertical-align: top; }
+        .content { color: #2c3e50; font-size: 0.95rem; }
+
+        .stroke { fill: none; stroke: #2c3e50; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+        .order-number { font-size: 6px; fill: #e74c3c; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>漢字書き順</h2>
+
+    <!-- 入力方法の切り替え -->
+    <div class="tab-bar">
+        <button class="tab-btn active" data-tab="draw" onclick="switchTab('draw')">手がき</button>
+        <button class="tab-btn" data-tab="grade" onclick="switchTab('grade')">学年からえらぶ</button>
+        <button class="tab-btn" data-tab="keyboard" onclick="switchTab('keyboard')">キーボード</button>
+    </div>
+
+    <!-- 手書き入力 -->
+    <div id="panel-draw" class="tab-panel active">
+        <canvas id="draw-canvas"></canvas>
+        <p class="draw-hint">しらべたい漢字を ゆびで かいてね</p>
+        <div class="draw-controls">
+            <button class="sub-btn" onclick="undoStroke()">1画もどす</button>
+            <button class="sub-btn" onclick="clearCanvas()">ぜんぶけす</button>
+        </div>
+        <div id="candidates"></div>
+    </div>
+
+    <!-- 学年リスト -->
+    <div id="panel-grade" class="tab-panel">
+        <div class="grade-bar">
+            <button class="grade-btn" onclick="selectGrade(1, this)">1年</button>
+            <button class="grade-btn" onclick="selectGrade(2, this)">2年</button>
+            <button class="grade-btn" onclick="selectGrade(3, this)">3年</button>
+            <button class="grade-btn" onclick="selectGrade(4, this)">4年</button>
+            <button class="grade-btn" onclick="selectGrade(5, this)">5年</button>
+            <button class="grade-btn" onclick="selectGrade(6, this)">6年</button>
+        </div>
+        <div id="kanji-grid">
+            <p class="grid-message">学年をえらんでね</p>
+        </div>
+    </div>
+
+    <!-- キーボード入力（従来方式） -->
+    <div id="panel-keyboard" class="tab-panel">
+        <div class="controls">
+            <input type="text" id="kanjiInput" maxlength="1" value="永" placeholder="漢">
+            <button class="run-btn" onclick="startFromKeyboard()">実行</button>
+        </div>
+    </div>
+
+    <!-- 書き順アニメーション表示（共通） -->
+    <div id="svg-container">
+        <p style="color: #bbb;">漢字をえらぶと ここに書き順が出るよ</p>
+    </div>
+
+    <div id="info-panel" class="info-panel" style="display:none;">
+        <div class="info-item"><span class="label">音読み</span><span id="on-yomi" class="content"></span></div>
+        <div class="info-item"><span class="label">訓読み</span><span id="kun-yomi" class="content"></span></div>
+    </div>
+</div>
+
+<script>
+/* =========================================================
+   タブ切り替え
+========================================================= */
+function switchTab(name) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    if (name === 'draw') setupCanvasSize(); // 表示後にサイズ確定
+}
+
+/* =========================================================
+   共通：漢字を受け取ってアニメーション開始
+========================================================= */
+let currentAnimationId = 0;
+
+async function startAnimation(kanji) {
+    if (!kanji) return;
+
+    const myId = ++currentAnimationId;
+    const container = document.getElementById('svg-container');
+    const infoPanel = document.getElementById('info-panel');
+    container.innerHTML = "<p>読み込み中...</p>";
+    infoPanel.style.display = "none";
+
+    const unicode = kanji.charCodeAt(0).toString(16).toLowerCase().padStart(5, '0');
+
+    try {
+        const [svgResponse, infoResponse] = await Promise.all([
+            fetch(`https://raw.githubusercontent.com/KanjiVG/kanjivg/master/kanji/${unicode}.svg`),
+            fetch(`https://kanjiapi.dev/v1/kanji/${encodeURIComponent(kanji)}`)
+        ]);
+
+        if (!svgResponse.ok) throw new Error('SVG not found');
+        const svgText = await svgResponse.text();
+
+        if (infoResponse.ok) {
+            const infoData = await infoResponse.json();
+            document.getElementById('on-yomi').textContent = infoData.on_readings.join('、') || '（なし）';
+            document.getElementById('kun-yomi').textContent = infoData.kun_readings.join('、') || '（なし）';
+            infoPanel.style.display = "block";
+        }
+
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(svgText, "image/svg+xml");
+        const pathElements = xmlDoc.querySelectorAll('path');
+        const pathsData = Array.from(pathElements).map(p => p.getAttribute('d'));
+
+        runAnimationLoop(pathsData, myId);
+
+    } catch (e) {
+        container.innerHTML = "<p style='color:#e74c3c;'>データが見つかりませんでした</p>";
+    }
+}
+
+function startFromKeyboard() {
+    startAnimation(document.getElementById('kanjiInput').value);
+}
+
+/* =========================================================
+   手書き入力（Google 手書き認識 API）
+========================================================= */
+const canvas = document.getElementById('draw-canvas');
+const ctx = canvas.getContext('2d');
+let strokes = [];          // 確定した画 [{x:[], y:[], t:[]}]
+let currentStroke = null;  // 描画中の画
+let drawing = false;
+let canvasCssSize = 300;   // CSSピクセルでの一辺
+let recognizeTimer = null;
+
+function setupCanvasSize() {
+    // 表示サイズに合わせて内部解像度を設定（Retina対応）
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvasCssSize = rect.width;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    redrawStrokes();
+}
+
+function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+canvas.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    drawing = true;
+    const p = getPos(e);
+    currentStroke = { x: [p.x], y: [p.y], t: [Date.now()] };
+    ctx.beginPath();
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#2c3e50';
+    ctx.moveTo(p.x, p.y);
+});
+
+canvas.addEventListener('pointermove', e => {
+    if (!drawing) return;
+    e.preventDefault();
+    const p = getPos(e);
+    currentStroke.x.push(p.x);
+    currentStroke.y.push(p.y);
+    currentStroke.t.push(Date.now());
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+});
+
+function endStroke(e) {
+    if (!drawing) return;
+    drawing = false;
+    if (currentStroke && currentStroke.x.length > 1) {
+        strokes.push(currentStroke);
+        scheduleRecognize();
+    }
+    currentStroke = null;
+}
+canvas.addEventListener('pointerup', endStroke);
+canvas.addEventListener('pointercancel', endStroke);
+
+function redrawStrokes() {
+    ctx.clearRect(0, 0, canvasCssSize, canvasCssSize);
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#2c3e50';
+    for (const s of strokes) {
+        ctx.beginPath();
+        ctx.moveTo(s.x[0], s.y[0]);
+        for (let i = 1; i < s.x.length; i++) ctx.lineTo(s.x[i], s.y[i]);
+        ctx.stroke();
+    }
+}
+
+function undoStroke() {
+    strokes.pop();
+    redrawStrokes();
+    scheduleRecognize();
+}
+
+function clearCanvas() {
+    strokes = [];
+    redrawStrokes();
+    document.getElementById('candidates').innerHTML = '';
+    if (recognizeTimer) clearTimeout(recognizeTimer);
+}
+
+// 1画書き終わるたびに、少し待ってから自動認識
+function scheduleRecognize() {
+    if (recognizeTimer) clearTimeout(recognizeTimer);
+    if (strokes.length === 0) {
+        document.getElementById('candidates').innerHTML = '';
+        return;
+    }
+    recognizeTimer = setTimeout(recognizeHandwriting, 500);
+}
+
+async function recognizeHandwriting() {
+    const candDiv = document.getElementById('candidates');
+    candDiv.innerHTML = '<p style="color:#bbb; margin:0;">かんがえ中...</p>';
+
+    // 時刻は各画の開始からの相対ミリ秒に変換
+    const ink = strokes.map(s => {
+        const t0 = s.t[0];
+        return [s.x.map(Math.round), s.y.map(Math.round), s.t.map(t => t - t0)];
+    });
+
+    try {
+        const res = await fetch('https://inputtools.google.com/request?itc=ja-t-i0-handwrit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                options: 'enable_pre_space',
+                requests: [{
+                    writing_guide: {
+                        writing_area_width: Math.round(canvasCssSize),
+                        writing_area_height: Math.round(canvasCssSize)
+                    },
+                    pre_context: '',
+                    max_num_results: 15,
+                    max_completions: 0,
+                    language: 'ja',
+                    ink: ink
+                }]
+            })
+        });
+
+        const data = await res.json();
+        if (data[0] !== 'SUCCESS') throw new Error('recognition failed');
+
+        // 候補から「漢字1文字」だけを抽出（かな・記号・複数文字を除外）
+        const kanjiOnly = (data[1][0][1] || [])
+            .filter(c => c.length === 1 && /[\u3400-\u9FFF\uF900-\uFAFF]/.test(c))
+            .slice(0, 6);
+
+        if (kanjiOnly.length === 0) {
+            candDiv.innerHTML = '<p style="color:#bbb; margin:0;">もうすこし かいてみてね</p>';
+            return;
+        }
+
+        candDiv.innerHTML = '';
+        for (const k of kanjiOnly) {
+            const btn = document.createElement('button');
+            btn.className = 'cand-btn';
+            btn.textContent = k;
+            btn.onclick = () => startAnimation(k);
+            candDiv.appendChild(btn);
+        }
+    } catch (e) {
+        candDiv.innerHTML = '<p style="color:#e74c3c; margin:0;">にんしきできませんでした（通信エラー）</p>';
+    }
+}
+
+/* =========================================================
+   学年別リスト（kanjiapi.dev）
+========================================================= */
+const gradeCache = {};
+
+async function selectGrade(grade, btnEl) {
+    document.querySelectorAll('.grade-btn').forEach(b => b.classList.remove('active'));
+    btnEl.classList.add('active');
+
+    const grid = document.getElementById('kanji-grid');
+
+    if (!gradeCache[grade]) {
+        grid.innerHTML = '<p class="grid-message">読み込み中...</p>';
+        try {
+            const res = await fetch(`https://kanjiapi.dev/v1/kanji/grade-${grade}`);
+            if (!res.ok) throw new Error('fetch failed');
+            gradeCache[grade] = await res.json();
+        } catch (e) {
+            grid.innerHTML = '<p class="grid-message" style="color:#e74c3c;">読み込みに失敗しました</p>';
+            return;
+        }
+    }
+
+    grid.innerHTML = '';
+    for (const k of gradeCache[grade]) {
+        const btn = document.createElement('button');
+        btn.className = 'kanji-btn';
+        btn.textContent = k;
+        btn.onclick = () => startAnimation(k);
+        grid.appendChild(btn);
+    }
+    grid.scrollTop = 0;
+}
+
+/* =========================================================
+   書き順アニメーション（既存ロジックそのまま）
+========================================================= */
+function animatePath(path, length, duration) {
+    return new Promise(resolve => {
+        path.style.strokeDasharray = length;
+        path.style.strokeDashoffset = length;
+
+        let startTime = null;
+
+        function step(timestamp) {
+            if (!startTime) startTime = timestamp;
+            const elapsed = timestamp - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+
+            const eased = progress < 0.5
+                ? 2 * progress * progress
+                : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+            path.style.strokeDashoffset = length * (1 - eased);
+
+            if (progress < 1) {
+                requestAnimationFrame(step);
+            } else {
+                path.style.strokeDashoffset = 0;
+                resolve();
+            }
+        }
+
+        requestAnimationFrame(step);
+    });
+}
+
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function runAnimationLoop(pathsData, myId) {
+    const container = document.getElementById('svg-container');
+
+    const tempSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    tempSvg.setAttribute("viewBox", "0 0 109 109");
+    tempSvg.style.position = "absolute";
+    tempSvg.style.visibility = "hidden";
+    document.body.appendChild(tempSvg);
+
+    const pathLengths = pathsData.map(d => {
+        const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        p.setAttribute("d", d);
+        tempSvg.appendChild(p);
+        return p.getTotalLength();
+    });
+    document.body.removeChild(tempSvg);
+
+    while (true) {
+        if (myId !== currentAnimationId) return;
+
+        container.innerHTML = `<svg viewBox="0 0 109 109" id="kanjiSvg"></svg>`;
+        const svg = document.getElementById('kanjiSvg');
+
+        for (let i = 0; i < pathsData.length; i++) {
+            if (myId !== currentAnimationId) return;
+
+            const length = pathLengths[i];
+            const duration = Math.max(600, length * 8);
+
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("d", pathsData[i]);
+            path.setAttribute("class", "stroke");
+            path.style.strokeDasharray = length;
+            path.style.strokeDashoffset = length;
+            svg.appendChild(path);
+
+            const startPoint = path.getPointAtLength(0);
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("x", startPoint.x - 4);
+            text.setAttribute("y", startPoint.y - 4);
+            text.setAttribute("class", "order-number");
+            text.textContent = i + 1;
+            svg.appendChild(text);
+
+            await new Promise(r => requestAnimationFrame(r));
+            await animatePath(path, length, duration);
+
+            await wait(150);
+        }
+
+        await wait(3000);
+        if (myId !== currentAnimationId) return;
+    }
+}
+
+/* =========================================================
+   初期化
+========================================================= */
+window.addEventListener('resize', () => {
+    if (document.getElementById('panel-draw').classList.contains('active')) {
+        setupCanvasSize();
+    }
+});
+setupCanvasSize();
+</script>
+</body>
+</html>
