@@ -435,7 +435,21 @@ async function selectGrade(grade, btnEl) {
         try {
             const res = await fetch(`https://kanjiapi.dev/v1/kanji/grade-${grade}`);
             if (!res.ok) throw new Error('fetch failed');
-            gradeCache[grade] = await res.json();
+            const kanjiList = await res.json();
+
+            // 各漢字の画数を個別取得（初回のみ・並列）
+            const details = await Promise.all(
+                kanjiList.map(k =>
+                    fetch(`https://kanjiapi.dev/v1/kanji/${encodeURIComponent(k)}`)
+                        .then(r => r.ok ? r.json() : { kanji: k, stroke_count: 999 })
+                        .catch(() => ({ kanji: k, stroke_count: 999 }))
+                )
+            );
+
+            // 画数の少ない順にソート。画数が同じ場合はUnicode順で安定させる
+            details.sort((a, b) => a.stroke_count - b.stroke_count || a.kanji.codePointAt(0) - b.kanji.codePointAt(0));
+
+            gradeCache[grade] = details.map(d => d.kanji);
         } catch (e) {
             grid.innerHTML = '<p class="grid-message" style="color:#e74c3c;">読み込みに失敗しました</p>';
             return;
