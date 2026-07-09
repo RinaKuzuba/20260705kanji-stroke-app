@@ -63,7 +63,8 @@
         }
         #candidates {
             display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
-            min-height: 52px; margin-bottom: 6px;
+            min-height: 52px; max-height: 190px; overflow-y: auto;
+            margin-bottom: 6px; -webkit-overflow-scrolling: touch;
         }
         .cand-btn {
             font-size: 1.5rem; min-width: 52px; min-height: 52px;
@@ -72,6 +73,13 @@
             font-family: inherit; touch-action: manipulation;
         }
         .cand-btn:active { background: #3498db; color: #fff; }
+        .read-btn {
+            font-size: 1rem; min-height: 52px; padding: 0 14px;
+            border: 2px solid #27ae60; border-radius: 12px;
+            background: #eafaf1; color: #1e6b43; cursor: pointer;
+            font-weight: bold; font-family: inherit; touch-action: manipulation;
+        }
+        .read-btn:active { background: #27ae60; color: #fff; }
 
         /* ===== 学年リストパネル ===== */
         .grade-bar {
@@ -148,7 +156,7 @@
 <body>
 
 <div class="container">
-    <h2>漢字書き順アニメーター２</h2>
+    <h2>漢字書き順</h2>
 
     <!-- 入力方法の切り替え -->
     <div class="tab-bar">
@@ -160,7 +168,7 @@
     <!-- 手書き入力 -->
     <div id="panel-draw" class="tab-panel active">
         <canvas id="draw-canvas"></canvas>
-        <p class="draw-hint">しらべたい漢字を ゆびで かいてね</p>
+        <p class="draw-hint">しらべたい漢字を ゆびで かいてね（ひらがなでもOK）</p>
         <div class="draw-controls">
             <button class="sub-btn" onclick="undoStroke()">1画もどす</button>
             <button class="sub-btn" onclick="clearCanvas()">ぜんぶけす</button>
@@ -186,9 +194,10 @@
     <!-- キーボード入力（従来方式） -->
     <div id="panel-keyboard" class="tab-panel">
         <div class="controls">
-            <input type="text" id="kanjiInput" maxlength="1" value="永" placeholder="漢">
+            <input type="text" id="kanjiInput" maxlength="4" value="永" placeholder="漢字" style="width:140px;">
             <button class="run-btn" onclick="startFromKeyboard()">実行</button>
         </div>
+        <p class="draw-hint" style="margin-top:8px;">単語もOK（例：学校、食べる）</p>
     </div>
 
     <!-- 書き順アニメーション表示（共通） -->
@@ -196,10 +205,7 @@
         <p style="color: #bbb;">漢字をえらぶと ここに書き順が出るよ</p>
     </div>
 
-    <div id="info-panel" class="info-panel" style="display:none;">
-        <div class="info-item"><span class="label">音読み</span><span id="on-yomi" class="content"></span></div>
-        <div class="info-item"><span class="label">訓読み</span><span id="kun-yomi" class="content"></span></div>
-    </div>
+    <div id="info-panel" class="info-panel" style="display:none;"></div>
 </div>
 
 <script>
@@ -218,39 +224,71 @@ function switchTab(name) {
 ========================================================= */
 let currentAnimationId = 0;
 
-async function startAnimation(kanji) {
-    if (!kanji) return;
+async function startAnimation(word) {
+    word = (word || '').trim();
+    if (!word) return;
 
+    const chars = Array.from(word).slice(0, 4); // 最大4文字まで
     const myId = ++currentAnimationId;
     const container = document.getElementById('svg-container');
     const infoPanel = document.getElementById('info-panel');
     container.innerHTML = "<p>読み込み中...</p>";
     infoPanel.style.display = "none";
 
-    const unicode = kanji.charCodeAt(0).toString(16).toLowerCase().padStart(5, '0');
-
     try {
-        const [svgResponse, infoResponse] = await Promise.all([
-            fetch(`https://raw.githubusercontent.com/KanjiVG/kanjivg/master/kanji/${unicode}.svg`),
-            fetch(`https://kanjiapi.dev/v1/kanji/${encodeURIComponent(kanji)}`)
-        ]);
+        // 各文字のSVG（書き順データ）を並列取得。失敗した文字はnullにして続行し、
+        // 「どの文字が原因か」を後で特定できるようにする
+        const svgResults = await Promise.all(chars.map(async c => {
+            const unicode = c.codePointAt(0).toString(16).toLowerCase().padStart(5, '0');
+            try {
+                const r = await fetch(`https://raw.githubusercontent.com/KanjiVG/kanjivg/master/kanji/${unicode}.svg`);
+                if (!r.ok) return { char: c, ok: false };
+                return { char: c, ok: true, text: await r.text() };
+            } catch (e) {
+                return { char: c, ok: false };
+            }
+        }));
 
-        if (!svgResponse.ok) throw new Error('SVG not found');
-        const svgText = await svgResponse.text();
+        const missing = svgResults.filter(r => !r.ok).map(r => r.char);
+        if (missing.length > 0) {
+            container.innerHTML =
+                `<p style='color:#e74c3c; padding:0 10px;'>「${missing.join('、')}」の書き順データが見つかりませんでした<br>` +
+                `<span style="font-size:0.8rem; color:#999;">（他の文字は正常でも、この字が無いため単語全体を表示できません）</span></p>`;
+            return;
+        }
 
-        if (infoResponse.ok) {
-            const infoData = await infoResponse.json();
-            document.getElementById('on-yomi').textContent = infoData.on_readings.join('、') || '（なし）';
-            document.getElementById('kun-yomi').textContent = infoData.kun_readings.join('、') || '（なし）';
+        const svgTexts = svgResults.map(r => r.text);
+
+        // 各文字の読み情報を取得（かな・記号は辞書にないため null → スキップ）
+        const infos = await Promise.all(chars.map(c =>
+            fetch(`https://kanjiapi.dev/v1/kanji/${encodeURIComponent(c)}`)
+                .then(r => r.ok ? r.json() : null)
+                .catch(() => null)
+        ));
+
+        let infoHtml = '';
+        chars.forEach((c, i) => {
+            const info = infos[i];
+            if (!info) return;
+            const on = (info.on_readings || []).join('、') || '（なし）';
+            const kun = (info.kun_readings || []).join('、') || '（なし）';
+            const prefix = chars.length > 1 ? c + ' ' : '';
+            infoHtml += `<div class="info-item"><span class="label">${prefix}音読み</span><span class="content">${on}</span></div>`;
+            infoHtml += `<div class="info-item"><span class="label">${prefix}訓読み</span><span class="content">${kun}</span></div>`;
+        });
+        if (infoHtml) {
+            infoPanel.innerHTML = infoHtml;
             infoPanel.style.display = "block";
         }
 
+        // 文字ごとにパスを抽出
         const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(svgText, "image/svg+xml");
-        const pathElements = xmlDoc.querySelectorAll('path');
-        const pathsData = Array.from(pathElements).map(p => p.getAttribute('d'));
+        const charPaths = svgTexts.map(t => {
+            const doc = parser.parseFromString(t, "image/svg+xml");
+            return Array.from(doc.querySelectorAll('path')).map(p => p.getAttribute('d'));
+        });
 
-        runAnimationLoop(pathsData, myId);
+        runAnimationLoop(charPaths, myId);
 
     } catch (e) {
         container.innerHTML = "<p style='color:#e74c3c;'>データが見つかりませんでした</p>";
@@ -396,26 +434,106 @@ async function recognizeHandwriting() {
         const data = await res.json();
         if (data[0] !== 'SUCCESS') throw new Error('recognition failed');
 
-        // 候補から「漢字1文字」だけを抽出（かな・記号・複数文字を除外）
-        const kanjiOnly = (data[1][0][1] || [])
-            .filter(c => c.length === 1 && /[\u3400-\u9FFF\uF900-\uFAFF]/.test(c))
+        const raw = data[1][0][1] || [];
+
+        // 漢字候補（1〜2文字の漢字。手書きで直接単語を書いた場合も拾う）
+        const kanjiCands = raw
+            .filter(c => /^[\u3400-\u9FFF\uF900-\uFAFF]{1,2}$/.test(c))
             .slice(0, 6);
 
-        if (kanjiOnly.length === 0) {
+        // かな候補（ひらがな・カタカナ）→「読みから漢字をさがす」ボタンにする
+        const kanaCands = raw
+            .filter(c => /^[\u3041-\u3096\u30A1-\u30FA\u30FCー]+$/.test(c))
+            .slice(0, 2);
+
+        if (kanjiCands.length === 0 && kanaCands.length === 0) {
             candDiv.innerHTML = '<p style="color:#bbb; margin:0;">もうすこし かいてみてね</p>';
             return;
         }
 
         candDiv.innerHTML = '';
-        for (const k of kanjiOnly) {
+        for (const k of kanjiCands) {
             const btn = document.createElement('button');
             btn.className = 'cand-btn';
             btn.textContent = k;
             btn.onclick = () => startAnimation(k);
             candDiv.appendChild(btn);
         }
+        for (const r of kanaCands) {
+            const btn = document.createElement('button');
+            btn.className = 'read-btn';
+            btn.textContent = `「${r}」の漢字をさがす`;
+            btn.onclick = () => searchByReading(r);
+            candDiv.appendChild(btn);
+        }
     } catch (e) {
         candDiv.innerHTML = '<p style="color:#e74c3c; margin:0;">にんしきできませんでした（通信エラー）</p>';
+    }
+}
+
+/* =========================================================
+   読み（かな）→ 漢字・単語の検索
+   1) Google IME変換API：単語変換（りょこう→旅行）
+   2) kanjiapi.dev reading：その読みを持つ単漢字（さかな→魚・肴）
+========================================================= */
+function toKatakana(s) {
+    return s.replace(/[\u3041-\u3096]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60));
+}
+function toHiragana(s) {
+    return s.replace(/[\u30A1-\u30F6]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+}
+
+async function searchByReading(reading) {
+    const candDiv = document.getElementById('candidates');
+    candDiv.innerHTML = '<p style="color:#bbb; margin:0;">「' + reading + '」の漢字をさがし中...</p>';
+
+    const hira = toHiragana(reading);
+    const results = [];
+
+    // 1) かな→漢字変換（単語候補）
+    try {
+        const res = await fetch(
+            `https://inputtools.google.com/request?text=${encodeURIComponent(hira)}&itc=ja-t-ja-hira-i0-und&num=13`,
+            { method: 'POST' }
+        );
+        const data = await res.json();
+        if (data[0] === 'SUCCESS') {
+            for (const c of (data[1][0][1] || [])) results.push(c);
+        }
+    } catch (e) { /* 変換APIが使えなくても下の辞書検索は続行 */ }
+
+    // 2) その読みを持つ単漢字（訓読み=ひらがな・音読み=カタカナの両方で検索）
+    for (const q of new Set([hira, toKatakana(hira)])) {
+        try {
+            const r = await fetch(`https://kanjiapi.dev/v1/reading/${encodeURIComponent(q)}`);
+            if (r.ok) {
+                const j = await r.json();
+                for (const k of (j.main_kanji || [])) results.push(k);
+            }
+        } catch (e) { /* skip */ }
+    }
+
+    // 漢字を含む・4文字以内・重複なし、に絞る
+    const seen = new Set();
+    const finals = results.filter(w => {
+        if (seen.has(w)) return false;
+        seen.add(w);
+        return w.length <= 4 && /[\u3400-\u9FFF\uF900-\uFAFF]/.test(w);
+    }).slice(0, 18);
+
+    if (finals.length === 0) {
+        candDiv.innerHTML = '<p style="color:#bbb; margin:0;">「' + reading + '」の漢字は みつかりませんでした</p>';
+        return;
+    }
+
+    candDiv.innerHTML = '';
+    for (const w of finals) {
+        const btn = document.createElement('button');
+        btn.className = 'cand-btn';
+        if (w.length > 1) btn.style.fontSize = '1.2rem';
+        btn.textContent = w;
+        btn.onclick = () => startAnimation(w);
+        candDiv.appendChild(btn);
     }
 }
 
@@ -504,18 +622,31 @@ function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function runAnimationLoop(pathsData, myId) {
+async function runAnimationLoop(charPaths, myId) {
     const container = document.getElementById('svg-container');
+    const NS = "http://www.w3.org/2000/svg";
+    const n = charPaths.length;
 
-    const tempSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    tempSvg.setAttribute("viewBox", "0 0 109 109");
+    // 文字数に応じて表示エリアを横長に（1文字なら正方形）
+    container.style.aspectRatio = `${n} / 1`;
+    container.style.backgroundSize = `${50 / n}% 50%`;
+
+    // 全パスを「何文字目の何画目か」の情報付きで平坦化
+    const flat = [];
+    charPaths.forEach((paths, gi) => {
+        paths.forEach((d, si) => flat.push({ d, gi, si }));
+    });
+
+    // パス長を事前計測
+    const tempSvg = document.createElementNS(NS, "svg");
+    tempSvg.setAttribute("viewBox", `0 0 ${109 * n} 109`);
     tempSvg.style.position = "absolute";
     tempSvg.style.visibility = "hidden";
     document.body.appendChild(tempSvg);
 
-    const pathLengths = pathsData.map(d => {
-        const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        p.setAttribute("d", d);
+    const pathLengths = flat.map(item => {
+        const p = document.createElementNS(NS, "path");
+        p.setAttribute("d", item.d);
         tempSvg.appendChild(p);
         return p.getTotalLength();
     });
@@ -524,29 +655,49 @@ async function runAnimationLoop(pathsData, myId) {
     while (true) {
         if (myId !== currentAnimationId) return;
 
-        container.innerHTML = `<svg viewBox="0 0 109 109" id="kanjiSvg"></svg>`;
+        container.innerHTML = `<svg viewBox="0 0 ${109 * n} 109" id="kanjiSvg"></svg>`;
         const svg = document.getElementById('kanjiSvg');
 
-        for (let i = 0; i < pathsData.length; i++) {
+        // 文字ごとのグループ（横にずらして配置）
+        const groups = charPaths.map((_, gi) => {
+            const g = document.createElementNS(NS, "g");
+            g.setAttribute("transform", `translate(${109 * gi}, 0)`);
+            svg.appendChild(g);
+            return g;
+        });
+
+        // 文字の区切り線（2文字以上のとき）
+        for (let gi = 1; gi < n; gi++) {
+            const line = document.createElementNS(NS, "line");
+            line.setAttribute("x1", 109 * gi); line.setAttribute("y1", 4);
+            line.setAttribute("x2", 109 * gi); line.setAttribute("y2", 105);
+            line.setAttribute("stroke", "#eee");
+            line.setAttribute("stroke-width", "1");
+            svg.appendChild(line);
+        }
+
+        for (let i = 0; i < flat.length; i++) {
             if (myId !== currentAnimationId) return;
 
+            const { d, gi, si } = flat[i];
             const length = pathLengths[i];
             const duration = Math.max(600, length * 8);
 
-            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            path.setAttribute("d", pathsData[i]);
+            const path = document.createElementNS(NS, "path");
+            path.setAttribute("d", d);
             path.setAttribute("class", "stroke");
             path.style.strokeDasharray = length;
             path.style.strokeDashoffset = length;
-            svg.appendChild(path);
+            groups[gi].appendChild(path);
 
+            // 書き順番号は文字ごとに1から振り直す
             const startPoint = path.getPointAtLength(0);
-            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            const text = document.createElementNS(NS, "text");
             text.setAttribute("x", startPoint.x - 4);
             text.setAttribute("y", startPoint.y - 4);
             text.setAttribute("class", "order-number");
-            text.textContent = i + 1;
-            svg.appendChild(text);
+            text.textContent = si + 1;
+            groups[gi].appendChild(text);
 
             await new Promise(r => requestAnimationFrame(r));
             await animatePath(path, length, duration);
